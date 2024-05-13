@@ -26,16 +26,16 @@ var (
 	testPromos    = kargoapi.PromotionList{
 		Items: []kargoapi.Promotion{
 			// foo stage. two have same creation timestamp but different names
-			*newPromo(testNamespace, "d", "foo", "", after),
-			*newPromo(testNamespace, "b", "foo", "", now),
-			*newPromo(testNamespace, "c", "foo", "", now),
-			*newPromo(testNamespace, "a", "foo", "", before),
+			*mustNewPromo(testNamespace, "d", "foo", "", after),
+			*mustNewPromo(testNamespace, "b", "foo", "", now),
+			*mustNewPromo(testNamespace, "c", "foo", "", now),
+			*mustNewPromo(testNamespace, "a", "foo", "", before),
 			// bar stage. two are Running (possibly because of bad bookkeeping).
 			// one needs to be deduplicated. one promo is invalid
-			*newPromo(testNamespace, "x", "bar", "", before),
-			*newPromo(testNamespace, "x", "bar", "", before),
-			*newPromo(testNamespace, "y", "bar", kargoapi.PromotionPhaseRunning, now),
-			*newPromo(testNamespace, "z", "bar", "", after),
+			*mustNewPromo(testNamespace, "x", "bar", "", before),
+			*mustNewPromo(testNamespace, "x", "bar", "", before),
+			*mustNewPromo(testNamespace, "y", "bar", kargoapi.PromotionPhaseRunning, now),
+			*mustNewPromo(testNamespace, "z", "bar", "", after),
 			{
 				ObjectMeta: metav1.ObjectMeta{
 					CreationTimestamp: now,
@@ -47,11 +47,15 @@ var (
 	}
 )
 
-func newPromo(namespace, name, stage string,
+func mustNewPromo(
+	namespace,
+	name,
+	stage string,
 	phase kargoapi.PromotionPhase,
 	creationTimestamp metav1.Time,
+	eventPayloads ...kargoapi.EventPayload,
 ) *kargoapi.Promotion {
-	return &kargoapi.Promotion{
+	p := &kargoapi.Promotion{
 		ObjectMeta: metav1.ObjectMeta{
 			CreationTimestamp: creationTimestamp,
 			Name:              name,
@@ -64,6 +68,12 @@ func newPromo(namespace, name, stage string,
 			Phase: phase,
 		},
 	}
+	if len(eventPayloads) > 0 {
+		if err := kargoapi.SetEventPayloads(p, eventPayloads...); err != nil {
+			panic(fmt.Errorf("failed to set event payloads: %w", err))
+		}
+	}
+	return p
 }
 
 func TestInitializeQueues(t *testing.T) {
@@ -143,23 +153,23 @@ func TestTryBegin(t *testing.T) {
 
 	// 3. Try to begin promos not first in queue
 	for _, promoName := range []string{"b", "c", "d"} {
-		require.False(t, pqs.tryBegin(ctx, newPromo(testNamespace, promoName, "foo", "", now)))
+		require.False(t, pqs.tryBegin(ctx, mustNewPromo(testNamespace, promoName, "foo", "", now)))
 		require.Equal(t, "", pqs.activePromoByStage[fooStageKey])
 		require.Equal(t, 4, pqs.pendingPromoQueuesByStage[fooStageKey].Depth())
 	}
 
 	// 4. Now try to begin highest priority. this should succeed
-	require.True(t, pqs.tryBegin(ctx, newPromo(testNamespace, "a", "foo", "", now)))
+	require.True(t, pqs.tryBegin(ctx, mustNewPromo(testNamespace, "a", "foo", "", now)))
 	require.Equal(t, "a", pqs.activePromoByStage[fooStageKey])
 	require.Equal(t, 3, pqs.pendingPromoQueuesByStage[fooStageKey].Depth())
 
 	// 5. Begin an already active promo, this should be a no-op
-	require.True(t, pqs.tryBegin(ctx, newPromo(testNamespace, "a", "foo", "", now)))
+	require.True(t, pqs.tryBegin(ctx, mustNewPromo(testNamespace, "a", "foo", "", now)))
 	require.Equal(t, "a", pqs.activePromoByStage[fooStageKey])
 	require.Equal(t, 3, pqs.pendingPromoQueuesByStage[fooStageKey].Depth())
 
 	// 5. Begin a promo with something else active, this should be a no-op
-	require.False(t, pqs.tryBegin(ctx, newPromo(testNamespace, "b", "foo", "", now)))
+	require.False(t, pqs.tryBegin(ctx, mustNewPromo(testNamespace, "b", "foo", "", now)))
 	require.Equal(t, "a", pqs.activePromoByStage[fooStageKey])
 	require.Equal(t, 3, pqs.pendingPromoQueuesByStage[fooStageKey].Depth())
 }
@@ -174,7 +184,7 @@ func TestConclude(t *testing.T) {
 	ctx := context.TODO()
 
 	// Test setup
-	require.True(t, pqs.tryBegin(ctx, newPromo(testNamespace, "a", "foo", "", now)))
+	require.True(t, pqs.tryBegin(ctx, mustNewPromo(testNamespace, "a", "foo", "", now)))
 
 	// 1. conclude something not even active. it should be a no-op
 	pqs.conclude(ctx, fooStageKey, "not-active")

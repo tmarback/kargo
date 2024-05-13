@@ -230,6 +230,27 @@ func (r *reconciler) Reconcile(
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+
+	if promo != nil {
+		// Check if there are any webhook events to be recorded
+		eventPayloads, ok, extractErr := kargoapi.ExtractEventPayloads(promo)
+		if extractErr != nil {
+			logger.WithError(extractErr).
+				Warn("ignoring event payloads extraction failure")
+		} else if ok {
+			// Record events if exists
+			for _, p := range eventPayloads {
+				r.recorder.AnnotatedEventf(promo, p.Annotations, p.EventType, p.Reason, p.Message)
+			}
+
+			// Clear event payloads annotation if exists
+			kargoapi.ClearEventPayloads(promo)
+			if err = r.kargoClient.Update(ctx, promo); err != nil {
+				return ctrl.Result{}, fmt.Errorf("clear event payloads: %w", err)
+			}
+		}
+	}
+
 	if promo == nil || promo.Status.Phase.IsTerminal() {
 		// Ignore if not found or already finished. Promo might be nil if the
 		// Promotion was deleted after the current reconciliation request was issued.

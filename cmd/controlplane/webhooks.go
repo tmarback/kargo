@@ -117,7 +117,7 @@ func (o *webhooksServerOptions) run(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("setup Project webhook: %w", err)
 	}
-	if err = promotion.SetupWebhookWithManager(ctx, webhookCfg, mgr); err != nil {
+	if err = promotion.SetupWebhookWithManager(webhookCfg, mgr); err != nil {
 		return fmt.Errorf("setup Promotion webhook: %w", err)
 	}
 	if err = stage.SetupWebhookWithManager(webhookCfg, mgr); err != nil {

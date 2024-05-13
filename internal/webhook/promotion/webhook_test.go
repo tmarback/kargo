@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	admissionv1 "k8s.io/api/admission/v1"
 	authnv1 "k8s.io/api/authentication/v1"
 	authzv1 "k8s.io/api/authorization/v1"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -18,7 +20,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
-	fakeevent "github.com/akuity/kargo/internal/kubernetes/event/fake"
 	libWebhook "github.com/akuity/kargo/internal/webhook"
 )
 
@@ -28,7 +29,6 @@ func TestNewWebhook(t *testing.T) {
 		libWebhook.Config{},
 		kubeClient,
 		admission.NewDecoder(kubeClient.Scheme()),
-		&fakeevent.EventRecorder{},
 	)
 	// Assert that all overridable behaviors were initialized to a default:
 	require.NotNil(t, w.getFreightFn)
@@ -125,6 +125,55 @@ func TestDefault(t *testing.T) {
 				require.NotEmpty(t, promo.OwnerReferences)
 			},
 		},
+		{
+			name: "annotate promotion created event on create request",
+			webhook: &webhook{
+				admissionRequestFromContextFn: func(context.Context) (admission.Request, error) {
+					return admission.Request{
+						AdmissionRequest: admissionv1.AdmissionRequest{
+							Operation: admissionv1.Create,
+						},
+					}, nil
+				},
+				isRequestFromKargoControlplaneFn: func(_ admission.Request) bool {
+					return false
+				},
+				getFreightFn: func(
+					context.Context,
+					client.Client,
+					types.NamespacedName,
+				) (*kargoapi.Freight, error) {
+					return &kargoapi.Freight{
+						ObjectMeta: v1.ObjectMeta{
+							Namespace: "fake-namespace",
+							Name:      "fake-freight",
+						},
+					}, nil
+				},
+				getStageFn: func(
+					context.Context,
+					client.Client,
+					types.NamespacedName,
+				) (*kargoapi.Stage, error) {
+					return &kargoapi.Stage{
+						Spec: kargoapi.StageSpec{
+							PromotionMechanisms: &kargoapi.PromotionMechanisms{},
+							Shard:               "fake-shard",
+						},
+					}, nil
+				},
+			},
+			assertions: func(t *testing.T, promo *kargoapi.Promotion, err error) {
+				require.NoError(t, err)
+
+				payloads, ok, extractErr := kargoapi.ExtractEventPayloads(promo)
+				require.NoError(t, extractErr)
+				require.True(t, ok)
+				require.Len(t, payloads, 1)
+				require.Equal(t, corev1.EventTypeNormal, payloads[0].EventType)
+				require.Equal(t, kargoapi.EventReasonPromotionCreated, payloads[0].Reason)
+			},
+		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -144,7 +193,7 @@ func TestValidateCreate(t *testing.T) {
 		name       string
 		webhook    *webhook
 		userInfo   *authnv1.UserInfo
-		assertions func(*testing.T, *fakeevent.EventRecorder, error)
+		assertions func(*testing.T, error)
 	}{
 		{
 			name: "error validating project",
@@ -158,7 +207,7 @@ func TestValidateCreate(t *testing.T) {
 					return errors.New("something went wrong")
 				},
 			},
-			assertions: func(t *testing.T, _ *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.Error(t, err)
 				require.Equal(t, "something went wrong", err.Error())
 			},
@@ -178,7 +227,7 @@ func TestValidateCreate(t *testing.T) {
 					return errors.New("something went wrong")
 				},
 			},
-			assertions: func(t *testing.T, _ *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.Error(t, err)
 				require.Equal(t, "something went wrong", err.Error())
 			},
@@ -212,11 +261,8 @@ func TestValidateCreate(t *testing.T) {
 			userInfo: &authnv1.UserInfo{
 				Username: "fake-user",
 			},
-			assertions: func(t *testing.T, r *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.NoError(t, err)
-				require.Len(t, r.Events, 1)
-				event := <-r.Events
-				require.Equal(t, kargoapi.EventReasonPromotionCreated, event.Reason)
 			},
 		},
 		{
@@ -241,17 +287,13 @@ func TestValidateCreate(t *testing.T) {
 			userInfo: &authnv1.UserInfo{
 				Username: serviceaccount.ServiceAccountUsernamePrefix + "kargo:kargo-api",
 			},
-			assertions: func(t *testing.T, r *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.NoError(t, err)
-				require.Empty(t, r.Events)
 			},
 		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			recorder := fakeevent.NewEventRecorder(1)
-			testCase.webhook.recorder = recorder
-
 			var req admission.Request
 			if testCase.userInfo != nil {
 				req.UserInfo = *testCase.userInfo
@@ -266,7 +308,7 @@ func TestValidateCreate(t *testing.T) {
 					},
 				},
 			)
-			testCase.assertions(t, recorder, err)
+			testCase.assertions(t, err)
 		})
 	}
 }

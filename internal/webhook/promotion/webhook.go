@@ -13,13 +13,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
-	libEvent "github.com/akuity/kargo/internal/kubernetes/event"
 	"github.com/akuity/kargo/internal/logging"
 	libWebhook "github.com/akuity/kargo/internal/webhook"
 )
@@ -38,8 +36,6 @@ var (
 type webhook struct {
 	client  client.Client
 	decoder *admission.Decoder
-
-	recorder record.EventRecorder
 
 	// The following behaviors are overridable for testing purposes:
 
@@ -80,7 +76,6 @@ type webhook struct {
 }
 
 func SetupWebhookWithManager(
-	ctx context.Context,
 	cfg libWebhook.Config,
 	mgr ctrl.Manager,
 ) error {
@@ -88,7 +83,6 @@ func SetupWebhookWithManager(
 		cfg,
 		mgr.GetClient(),
 		admission.NewDecoder(mgr.GetScheme()),
-		libEvent.NewRecorder(ctx, mgr.GetScheme(), mgr.GetClient(), "promotion-webhook"),
 	)
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(&kargoapi.Promotion{}).
@@ -101,12 +95,10 @@ func newWebhook(
 	cfg libWebhook.Config,
 	kubeClient client.Client,
 	decoder *admission.Decoder,
-	recorder record.EventRecorder,
 ) *webhook {
 	w := &webhook{
-		client:   kubeClient,
-		decoder:  decoder,
-		recorder: recorder,
+		client:  kubeClient,
+		decoder: decoder,
 	}
 	w.getFreightFn = kargoapi.GetFreight
 	w.getStageFn = kargoapi.GetStage
@@ -135,15 +127,39 @@ func (w *webhook) Default(ctx context.Context, obj runtime.Object) error {
 		}
 	}
 
+	eventPayloads := make([]kargoapi.EventPayload, 0, 1)
 	if promo.Annotations == nil {
-		promo.Annotations = make(map[string]string, 1)
+		promo.Annotations = make(map[string]string, 2)
 	}
 	if req.Operation == admissionv1.Create {
-		// Set actor as an admission request's user info when the promotion is created
-		// to allow controllers to track who created it.
+		// Add annotations for non-Kargo controlplane requests to let
+		// controllers track audit and record event.
 		if !w.isRequestFromKargoControlplaneFn(req) {
-			promo.Annotations[kargoapi.AnnotationKeyCreateActor] =
-				kargoapi.FormatEventKubernetesUserActor(req.UserInfo)
+			var freight *kargoapi.Freight
+			freight, err = w.getFreightFn(ctx, w.client, types.NamespacedName{
+				Namespace: promo.Namespace,
+				Name:      promo.Spec.Freight,
+			})
+			if err != nil {
+				return fmt.Errorf("get freight: %w", err)
+			}
+
+			// Set actor as an admission request's user info when the promotion is created
+			// to allow controllers to track who created it.
+			actor := kargoapi.FormatEventKubernetesUserActor(req.UserInfo)
+			promo.Annotations[kargoapi.AnnotationKeyCreateActor] = actor
+
+			// Record Promotion created event
+			eventPayloads = append(eventPayloads, kargoapi.EventPayload{
+				Annotations: kargoapi.NewPromotionEventAnnotations(ctx, actor, promo, freight),
+				EventType:   corev1.EventTypeNormal,
+				Reason:      kargoapi.EventReasonPromotionCreated,
+				Message: fmt.Sprintf(
+					"Promotion created for Stage %q by %q",
+					promo.Spec.Stage,
+					actor,
+				),
+			})
 		}
 	} else if req.Operation == admissionv1.Update {
 		// Ensure actor annotation immutability
@@ -198,6 +214,13 @@ func (w *webhook) Default(ctx context.Context, obj runtime.Object) error {
 	ownerRef :=
 		metav1.NewControllerRef(stage, kargoapi.GroupVersion.WithKind("Stage"))
 	promo.ObjectMeta.OwnerReferences = []metav1.OwnerReference{*ownerRef}
+
+	// Annotate event payloads to record in controller
+	if len(eventPayloads) > 0 {
+		if err := kargoapi.SetEventPayloads(promo, eventPayloads...); err != nil {
+			return fmt.Errorf("annotate event payloads: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -213,23 +236,6 @@ func (w *webhook) ValidateCreate(
 
 	if err := w.authorizeFn(ctx, promo, "create"); err != nil {
 		return nil, err
-	}
-
-	req, err := w.admissionRequestFromContextFn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get admission request from context: %w", err)
-	}
-
-	// Record Promotion created event if the request doesn't come from Kargo controlplane
-	if !w.isRequestFromKargoControlplaneFn(req) {
-		freight, err := w.getFreightFn(ctx, w.client, types.NamespacedName{
-			Namespace: promo.Namespace,
-			Name:      promo.Spec.Freight,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("get freight: %w", err)
-		}
-		w.recordPromotionCreatedEvent(ctx, req, promo, freight)
 	}
 	return nil, nil
 }
@@ -329,22 +335,4 @@ func (w *webhook) authorize(
 	}
 
 	return nil
-}
-
-func (w *webhook) recordPromotionCreatedEvent(
-	ctx context.Context,
-	req admission.Request,
-	p *kargoapi.Promotion,
-	f *kargoapi.Freight,
-) {
-	actor := kargoapi.FormatEventKubernetesUserActor(req.UserInfo)
-	w.recorder.AnnotatedEventf(
-		p,
-		kargoapi.NewPromotionEventAnnotations(ctx, actor, p, f),
-		corev1.EventTypeNormal,
-		kargoapi.EventReasonPromotionCreated,
-		"Promotion created for Stage %q by %q",
-		p.Spec.Stage,
-		actor,
-	)
 }

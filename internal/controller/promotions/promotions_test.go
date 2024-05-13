@@ -217,6 +217,7 @@ func TestReconcile(t *testing.T) {
 						require.Equal(t, reason, event.Reason)
 					}
 				}
+				require.NotContains(t, updatedPromo.Annotations, kargoapi.AnnotationKeyEventPayloads)
 			}
 		})
 	}

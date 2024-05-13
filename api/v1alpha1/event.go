@@ -12,6 +12,10 @@ import (
 )
 
 const (
+	// AnnotationKeyEventPayloads is an annotation key that can be injected
+	// to a resource by the Kargo webhook to record events on the controller side.
+	AnnotationKeyEventPayloads = "kargo.akuity.io/event-payloads"
+
 	AnnotationKeyEventActor                  = "event.kargo.akuity.io/actor"
 	AnnotationKeyEventProject                = "event.kargo.akuity.io/project"
 	AnnotationKeyEventPromotionName          = "event.kargo.akuity.io/promotion-name"
@@ -51,6 +55,14 @@ const (
 	EventActorKubernetesUserPrefix = "kubernetes:"
 	EventActorUnknown              = "unknown actor"
 )
+
+// EventPayload holds the values to be recorded as an Event.
+type EventPayload struct {
+	Annotations map[string]string `json:"annotations,omitempty"`
+	EventType   string            `json:"eventType"`
+	Reason      string            `json:"reason"`
+	Message     string            `json:"message"`
+}
 
 func FormatEventControllerActor(name string) string {
 	return EventActorControllerPrefix + name

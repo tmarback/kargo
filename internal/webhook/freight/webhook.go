@@ -7,19 +7,16 @@ import (
 
 	"github.com/technosophos/moniker"
 	admissionv1 "k8s.io/api/admission/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
 	"github.com/akuity/kargo/internal/kubeclient"
-	libEvent "github.com/akuity/kargo/internal/kubernetes/event"
 	libWebhook "github.com/akuity/kargo/internal/webhook"
 )
 
@@ -36,9 +33,8 @@ var (
 
 type webhook struct {
 	client                client.Client
+	decoder               *admission.Decoder
 	freightAliasGenerator moniker.Namer
-
-	recorder record.EventRecorder
 
 	// The following behaviors are overridable for testing purposes:
 
@@ -69,14 +65,13 @@ type webhook struct {
 }
 
 func SetupWebhookWithManager(
-	ctx context.Context,
 	cfg libWebhook.Config,
 	mgr ctrl.Manager,
 ) error {
 	w := newWebhook(
 		cfg,
 		mgr.GetClient(),
-		libEvent.NewRecorder(ctx, mgr.GetScheme(), mgr.GetClient(), "freight-webhook"),
+		admission.NewDecoder(mgr.GetScheme()),
 	)
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(&kargoapi.Freight{}).
@@ -88,12 +83,12 @@ func SetupWebhookWithManager(
 func newWebhook(
 	cfg libWebhook.Config,
 	kubeClient client.Client,
-	recorder record.EventRecorder,
+	decoder *admission.Decoder,
 ) *webhook {
 	w := &webhook{
 		client:                kubeClient,
+		decoder:               decoder,
 		freightAliasGenerator: moniker.New(),
-		recorder:              recorder,
 	}
 	w.admissionRequestFromContextFn = admission.RequestFromContext
 	w.getAvailableFreightAliasFn = w.getAvailableFreightAlias
@@ -106,18 +101,35 @@ func newWebhook(
 }
 
 func (w *webhook) Default(ctx context.Context, obj runtime.Object) error {
-	freight := obj.(*kargoapi.Freight) // nolint: forcetypeassert
-	// Re-calculate ID in case it wasn't set correctly to begin with -- possible
-	// if/when we allow users to create their own Freight.
-	freight.Name = freight.GenerateID()
-
-	// Sync the convenience alias field with the alias label
-	req, err := admission.RequestFromContext(ctx)
+	req, err := w.admissionRequestFromContextFn(ctx)
 	if err != nil {
 		return apierrors.NewInternalError(
 			fmt.Errorf("error getting admission request from context: %w", err),
 		)
 	}
+
+	freight := obj.(*kargoapi.Freight) // nolint: forcetypeassert
+
+	switch req.SubResource {
+	case "status":
+		return w.defaultFreightStatus(req, freight)
+	case "":
+		return w.defaultFreight(ctx, req, freight)
+	default:
+		return fmt.Errorf("unexpected subresource %q", req.SubResource)
+	}
+}
+
+func (w *webhook) defaultFreight(
+	ctx context.Context,
+	req admission.Request,
+	freight *kargoapi.Freight,
+) error {
+	// Re-calculate ID in case it wasn't set correctly to begin with -- possible
+	// if/when we allow users to create their own Freight.
+	freight.Name = freight.GenerateID()
+
+	// Sync the convenience alias field with the alias label
 	if freight.Labels == nil {
 		freight.Labels = make(map[string]string, 1)
 	}
@@ -138,6 +150,42 @@ func (w *webhook) Default(ctx context.Context, obj runtime.Object) error {
 		delete(freight.Labels, kargoapi.AliasLabelKey)
 	}
 
+	return nil
+}
+
+func (w *webhook) defaultFreightStatus(
+	req admission.Request,
+	freight *kargoapi.Freight,
+) error {
+	var oldFreight *kargoapi.Freight
+	// We need to decode old object manually since controller-runtime doesn't decode it for us.
+	if req.Operation == admissionv1.Update {
+		oldFreight = &kargoapi.Freight{}
+		if err := w.decoder.DecodeRaw(req.OldObject, oldFreight); err != nil {
+			return fmt.Errorf("decode old object: %w", err)
+		}
+	}
+
+	if oldFreight != nil {
+		// Check if any stages have been approved in the new Freight
+		var stageApproved bool
+		for approvedStage := range freight.Status.ApprovedFor {
+			if _, ok := oldFreight.Status.ApprovedFor[approvedStage]; !ok {
+				stageApproved = true
+			}
+		}
+		if stageApproved {
+			if w.isRequestFromKargoControlplaneFn(req) {
+				// Kargo controlplane records the approval event by themselves,
+				// clear LastApprovedBy to prevent duplicated event recording.
+				freight.Status.LastApprovedBy = ""
+			} else {
+				// Set LastApprovedBy to make controller recording the approval event.
+				actor := kargoapi.FormatEventKubernetesUserActor(req.UserInfo)
+				freight.Status.LastApprovedBy = actor
+			}
+		}
+	}
 	return nil
 }
 
@@ -236,19 +284,6 @@ func (w *webhook) ValidateUpdate(
 			},
 		)
 	}
-
-	req, err := w.admissionRequestFromContextFn(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("get admission request from context: %w", err)
-	}
-	// Record Freight approved events if the request doesn't come from Kargo controlplane.
-	if !w.isRequestFromKargoControlplaneFn(req) {
-		for approvedStage := range newFreight.Status.ApprovedFor {
-			if _, ok := oldFreight.Status.ApprovedFor[approvedStage]; !ok {
-				w.recordFreightApprovedEvent(req, newFreight, approvedStage)
-			}
-		}
-	}
 	return nil, nil
 }
 
@@ -282,21 +317,4 @@ func (w *webhook) ValidateDelete(
 		return nil, apierrors.NewForbidden(freightGroupResource, freight.Name, err)
 	}
 	return nil, nil
-}
-
-func (w *webhook) recordFreightApprovedEvent(
-	req admission.Request,
-	f *kargoapi.Freight,
-	stageName string,
-) {
-	actor := kargoapi.FormatEventKubernetesUserActor(req.UserInfo)
-	w.recorder.AnnotatedEventf(
-		f,
-		kargoapi.NewFreightApprovedEventAnnotations(actor, f, stageName),
-		corev1.EventTypeNormal,
-		kargoapi.EventReasonFreightApproved,
-		"Freight approved for Stage %q by %q",
-		stageName,
-		actor,
-	)
 }

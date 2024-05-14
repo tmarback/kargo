@@ -2,6 +2,7 @@ package freight
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	admissionv1 "k8s.io/api/admission/v1"
 	authnv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,7 +22,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	kargoapi "github.com/akuity/kargo/api/v1alpha1"
-	fakeevent "github.com/akuity/kargo/internal/kubernetes/event/fake"
 	libWebhook "github.com/akuity/kargo/internal/webhook"
 )
 
@@ -29,7 +30,7 @@ func TestNewWebhook(t *testing.T) {
 	w := newWebhook(
 		libWebhook.Config{},
 		kubeClient,
-		&fakeevent.EventRecorder{},
+		admission.NewDecoder(kubeClient.Scheme()),
 	)
 	require.NotNil(t, w.freightAliasGenerator)
 	// Assert that all overridable behaviors were initialized to a default:
@@ -42,9 +43,12 @@ func TestNewWebhook(t *testing.T) {
 }
 
 func TestDefault(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, kargoapi.AddToScheme(scheme))
+
 	testCases := []struct {
 		name       string
-		op         admissionv1.Operation
+		req        *admissionv1.AdmissionRequest
 		webhook    *webhook
 		freight    *kargoapi.Freight
 		assertions func(*testing.T, *kargoapi.Freight, error)
@@ -58,9 +62,15 @@ func TestDefault(t *testing.T) {
 			},
 		},
 		{
-			name:    "sync alias label to non-empty alias field",
-			op:      admissionv1.Create,
-			webhook: &webhook{},
+			name: "sync alias label to non-empty alias field",
+			req: &admissionv1.AdmissionRequest{
+				Operation: admissionv1.Create,
+			},
+			webhook: &webhook{
+				isRequestFromKargoControlplaneFn: func(admission.Request) bool {
+					return true
+				},
+			},
 			freight: &kargoapi.Freight{
 				Alias: "fake-alias",
 			},
@@ -73,10 +83,15 @@ func TestDefault(t *testing.T) {
 		},
 		{
 			name: "error getting available alias",
-			op:   admissionv1.Create,
+			req: &admissionv1.AdmissionRequest{
+				Operation: admissionv1.Create,
+			},
 			webhook: &webhook{
 				getAvailableFreightAliasFn: func(context.Context) (string, error) {
 					return "", errors.New("something went wrong")
+				},
+				isRequestFromKargoControlplaneFn: func(admission.Request) bool {
+					return true
 				},
 			},
 			freight: &kargoapi.Freight{},
@@ -87,10 +102,15 @@ func TestDefault(t *testing.T) {
 		},
 		{
 			name: "success getting available alias",
-			op:   admissionv1.Create,
+			req: &admissionv1.AdmissionRequest{
+				Operation: admissionv1.Create,
+			},
 			webhook: &webhook{
 				getAvailableFreightAliasFn: func(context.Context) (string, error) {
 					return "fake-alias", nil
+				},
+				isRequestFromKargoControlplaneFn: func(admission.Request) bool {
+					return true
 				},
 			},
 			freight: &kargoapi.Freight{},
@@ -102,9 +122,18 @@ func TestDefault(t *testing.T) {
 			},
 		},
 		{
-			name:    "update with empty alias",
-			op:      admissionv1.Update,
-			webhook: &webhook{},
+			name: "update with empty alias",
+			req: &admissionv1.AdmissionRequest{
+				Operation: admissionv1.Update,
+				OldObject: runtime.RawExtension{
+					Object: &kargoapi.Freight{},
+				},
+			},
+			webhook: &webhook{
+				isRequestFromKargoControlplaneFn: func(_ admission.Request) bool {
+					return true
+				},
+			},
 			freight: &kargoapi.Freight{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
@@ -120,20 +149,92 @@ func TestDefault(t *testing.T) {
 				require.False(t, ok)
 			},
 		},
+		{
+			name: "update with empty alias",
+			req: &admissionv1.AdmissionRequest{
+				Operation: admissionv1.Update,
+				OldObject: runtime.RawExtension{
+					Object: &kargoapi.Freight{},
+				},
+			},
+			webhook: &webhook{
+				isRequestFromKargoControlplaneFn: func(_ admission.Request) bool {
+					return true
+				},
+			},
+			freight: &kargoapi.Freight{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						kargoapi.AliasLabelKey: "fake-alias",
+					},
+				},
+			},
+			assertions: func(t *testing.T, freight *kargoapi.Freight, err error) {
+				require.NoError(t, err)
+				require.NotEmpty(t, freight.Name)
+				require.Empty(t, freight.Alias)
+				_, ok := freight.Labels[kargoapi.AliasLabelKey]
+				require.False(t, ok)
+			},
+		},
+		{
+			name: "annotate events if the freight is approved for the stage on update request",
+			req: &admissionv1.AdmissionRequest{
+				Operation: admissionv1.Update,
+				OldObject: runtime.RawExtension{
+					Object: &kargoapi.Freight{},
+				},
+			},
+			webhook: &webhook{
+				isRequestFromKargoControlplaneFn: func(_ admission.Request) bool {
+					return false
+				},
+			},
+			freight: &kargoapi.Freight{
+				Status: kargoapi.FreightStatus{
+					ApprovedFor: map[string]kargoapi.ApprovedStage{
+						"fake-stage": {},
+					},
+				},
+			},
+			assertions: func(t *testing.T, freight *kargoapi.Freight, err error) {
+				require.NoError(t, err)
+
+				payloads, ok, extractErr := kargoapi.ExtractEventPayloads(freight)
+				require.NoError(t, extractErr)
+				require.True(t, ok)
+				require.Len(t, payloads, 1)
+				require.Equal(t, corev1.EventTypeNormal, payloads[0].EventType)
+				require.Equal(t, kargoapi.EventReasonFreightApproved, payloads[0].Reason)
+			},
+		},
 	}
 	for _, testCase := range testCases {
+		// Apply default decoder to all test cases
+		testCase.webhook.decoder = admission.NewDecoder(scheme)
+
 		ctx := context.Background()
-		if testCase.op != "" {
+		if testCase.req != nil {
+			req := *testCase.req
+			// Make sure old object has corresponding Raw data instead of Object
+			// since controller-runtime doesn't decode the old object.
+			if req.OldObject.Object != nil {
+				data, err := json.Marshal(req.OldObject.Object)
+				require.NoError(t, err)
+				req.OldObject.Raw = data
+				req.OldObject.Object = nil
+			}
+
 			ctx = admission.NewContextWithRequest(
 				ctx,
 				admission.Request{
-					AdmissionRequest: admissionv1.AdmissionRequest{
-						Operation: testCase.op,
-					},
+					AdmissionRequest: req,
 				},
 			)
 		}
+
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			err := testCase.webhook.Default(ctx, testCase.freight)
 			testCase.assertions(t, testCase.freight, err)
 		})
@@ -302,7 +403,7 @@ func TestValidateUpdate(t *testing.T) {
 		webhook    *webhook
 		userInfo   *authnv1.UserInfo
 		setup      func() (*kargoapi.Freight, *kargoapi.Freight)
-		assertions func(*testing.T, *fakeevent.EventRecorder, error)
+		assertions func(*testing.T, error)
 	}{
 		{
 			name: "error listing freight",
@@ -332,7 +433,7 @@ func TestValidateUpdate(t *testing.T) {
 					return errors.New("something went wrong")
 				},
 			},
-			assertions: func(t *testing.T, _ *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				statusErr, ok := err.(*apierrors.StatusError)
 				require.True(t, ok)
 				require.Equal(
@@ -373,7 +474,7 @@ func TestValidateUpdate(t *testing.T) {
 					return nil
 				},
 			},
-			assertions: func(t *testing.T, _ *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				statusErr, ok := err.(*apierrors.StatusError)
 				require.True(t, ok)
 				require.Equal(t, int32(http.StatusConflict), statusErr.Status().Code)
@@ -408,7 +509,7 @@ func TestValidateUpdate(t *testing.T) {
 					return nil
 				},
 			},
-			assertions: func(t *testing.T, _ *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.ErrorContains(t, err, "is invalid")
 				require.ErrorContains(t, err, "freight is immutable")
 			},
@@ -437,7 +538,7 @@ func TestValidateUpdate(t *testing.T) {
 					return nil
 				},
 			},
-			assertions: func(t *testing.T, _ *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.ErrorContains(t, err, "is invalid")
 				require.ErrorContains(t, err, "freight is immutable")
 			},
@@ -477,10 +578,8 @@ func TestValidateUpdate(t *testing.T) {
 			userInfo: &authnv1.UserInfo{
 				Username: "fake-user",
 			},
-			assertions: func(t *testing.T, r *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.NoError(t, err)
-				// Recorder should not record non-freight approval events
-				require.Empty(t, r.Events)
 			},
 		},
 		{
@@ -522,11 +621,8 @@ func TestValidateUpdate(t *testing.T) {
 			userInfo: &authnv1.UserInfo{
 				Username: "fake-user",
 			},
-			assertions: func(t *testing.T, r *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.NoError(t, err)
-				require.Len(t, r.Events, 1)
-				event := <-r.Events
-				require.Equal(t, kargoapi.EventReasonFreightApproved, event.Reason)
 			},
 		},
 		{
@@ -568,18 +664,14 @@ func TestValidateUpdate(t *testing.T) {
 			userInfo: &authnv1.UserInfo{
 				Username: serviceaccount.ServiceAccountUsernamePrefix + "kargo:kargo-api",
 			},
-			assertions: func(t *testing.T, r *fakeevent.EventRecorder, err error) {
+			assertions: func(t *testing.T, err error) {
 				require.NoError(t, err)
-				require.Empty(t, r.Events)
 			},
 		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			oldFreight, newFreight := testCase.setup()
-
-			recorder := fakeevent.NewEventRecorder(1)
-			testCase.webhook.recorder = recorder
 
 			var req admission.Request
 			if testCase.userInfo != nil {
@@ -592,7 +684,7 @@ func TestValidateUpdate(t *testing.T) {
 				oldFreight,
 				newFreight,
 			)
-			testCase.assertions(t, recorder, err)
+			testCase.assertions(t, err)
 		})
 	}
 }

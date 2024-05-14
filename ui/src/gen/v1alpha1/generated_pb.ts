@@ -1190,6 +1190,16 @@ export class FreightStatus extends Message<FreightStatus> {
    */
   approvedFor: { [key: string]: ApprovedStage } = {};
 
+  /**
+   * LastApprovedBy describes the last actor who approved the Stages. This allows
+   * us to record the Freight approval events in the controller. The field will be
+   * managed by the webhook and filled only if the approval is done through
+   * non Kargo controlplane components (ex. `kubectl edit`).
+   *
+   * @generated from field: optional string approvedBy = 3;
+   */
+  approvedBy?: string;
+
   constructor(data?: PartialMessage<FreightStatus>) {
     super();
     proto2.util.initPartial(data, this);
@@ -1200,6 +1210,7 @@ export class FreightStatus extends Message<FreightStatus> {
   static readonly fields: FieldList = proto2.util.newFieldList(() => [
     { no: 1, name: "verifiedIn", kind: "map", K: 9 /* ScalarType.STRING */, V: {kind: "message", T: VerifiedStage} },
     { no: 2, name: "approvedFor", kind: "map", K: 9 /* ScalarType.STRING */, V: {kind: "message", T: ApprovedStage} },
+    { no: 3, name: "approvedBy", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): FreightStatus {

@@ -143,6 +143,11 @@ type FreightStatus struct {
 	// might wish to promote a piece of Freight to a given Stage without
 	// transiting the entire pipeline.
 	ApprovedFor map[string]ApprovedStage `json:"approvedFor,omitempty" protobuf:"bytes,2,rep,name=approvedFor" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// LastApprovedBy describes the last actor who approved the Stages. This allows
+	// us to record the Freight approval events in the controller. The field will be
+	// managed by the webhook and filled only if the approval is done through
+	// non Kargo controlplane components (ex. `kubectl edit`).
+	LastApprovedBy string `json:"approvedBy,omitempty" protobuf:"bytes,3,opt,name=approvedBy"`
 }
 
 // VerifiedStage describes a Stage in which Freight has been verified.

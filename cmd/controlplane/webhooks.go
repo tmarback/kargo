@@ -108,7 +108,7 @@ func (o *webhooksServerOptions) run(ctx context.Context) error {
 		return fmt.Errorf("index Stages by Freight: %w", err)
 	}
 
-	if err = freight.SetupWebhookWithManager(ctx, webhookCfg, mgr); err != nil {
+	if err = freight.SetupWebhookWithManager(webhookCfg, mgr); err != nil {
 		return fmt.Errorf("setup Freight webhook: %w", err)
 	}
 	if err = project.SetupWebhookWithManager(

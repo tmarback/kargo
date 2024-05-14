@@ -106,6 +106,10 @@
     "status": {
       "description": "Status describes the current status of this Freight.",
       "properties": {
+        "approvedBy": {
+          "description": "LastApprovedBy describes the last actor who approved the Stages. This allows\nus to record the Freight approval events in the controller. The field will be\nmanaged by the webhook and filled only if the approval is done through\nnon Kargo controlplane components (ex. `kubectl edit`).",
+          "type": "string"
+        },
         "approvedFor": {
           "additionalProperties": {
             "description": "ApprovedStage describes a Stage for which Freight has been (manually)\napproved.",

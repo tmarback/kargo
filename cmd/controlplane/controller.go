@@ -21,6 +21,7 @@ import (
 	libargocd "github.com/akuity/kargo/internal/argocd"
 	"github.com/akuity/kargo/internal/controller"
 	argocd "github.com/akuity/kargo/internal/controller/argocd/api/v1alpha1"
+	"github.com/akuity/kargo/internal/controller/freights"
 	"github.com/akuity/kargo/internal/controller/promotions"
 	rollouts "github.com/akuity/kargo/internal/controller/rollouts/api/v1alpha1"
 	"github.com/akuity/kargo/internal/controller/stages"
@@ -265,6 +266,13 @@ func (o *controllerOptions) setupReconcilers(
 	promotionsReconcilerCfg promotions.ReconcilerConfig,
 	stagesReconcilerCfg stages.ReconcilerConfig,
 ) error {
+	if err := freights.SetupReconcilerWithManager(
+		ctx,
+		kargoMgr,
+	); err != nil {
+		return fmt.Errorf("error setting up Freights reconciler: %w", err)
+	}
+
 	if err := promotions.SetupReconcilerWithManager(
 		ctx,
 		kargoMgr,

@@ -21,7 +21,7 @@ webhooks:
   - scope: Namespaced
     apiGroups: ["kargo.akuity.io"]
     apiVersions: ["v1alpha1"]
-    resources: ["freights"]
+    resources: ["freights", "freights/status"]
     operations: ["CREATE", "UPDATE"]
   failurePolicy: Fail
 - name: promotion.kargo.akuity.io

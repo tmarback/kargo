@@ -57,6 +57,10 @@ const (
 )
 
 // EventPayload holds the values to be recorded as an Event.
+//
+// +protobuf=false
+// +k8s:deepcopy-gen=false
+// +k8s:openapi-gen=false
 type EventPayload struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 	EventType   string            `json:"eventType"`

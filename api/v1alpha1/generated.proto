@@ -349,6 +349,12 @@ message FreightStatus {
   // might wish to promote a piece of Freight to a given Stage without
   // transiting the entire pipeline.
   map<string, ApprovedStage> approvedFor = 2;
+
+  // LastApprovedBy describes the last actor who approved the Stages. This allows
+  // us to record the Freight approval events in the controller. The field will be
+  // managed by the webhook and filled only if the approval is done through
+  // non Kargo controlplane components (ex. `kubectl edit`).
+  optional string approvedBy = 3;
 }
 
 // GitCommit describes a specific commit from a specific Git repository.

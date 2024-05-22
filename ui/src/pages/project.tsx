@@ -1,5 +1,6 @@
 import { useQuery } from '@connectrpc/connect-query';
 import {
+  IconDefinition,
   faChartBar,
   faClockRotateLeft,
   faDiagramProject,
@@ -12,6 +13,7 @@ import { generatePath, useNavigate, useParams } from 'react-router-dom';
 
 import { paths } from '@ui/config/paths';
 import { Description } from '@ui/features/common/description';
+import { ExtensionKind, useExtensions } from '@ui/features/extensions/extensions';
 import { AnalysisTemplatesList } from '@ui/features/project/analysis-templates/analysis-templates-list';
 import { CredentialsList } from '@ui/features/project/credentials/credentials-list';
 import { Events } from '@ui/features/project/events/events';
@@ -21,29 +23,31 @@ import { ProjectSettings } from '@ui/features/project/settings/project-settings'
 import { getProject } from '@ui/gen/service/v1alpha1/service-KargoService_connectquery';
 import { Project as _Project } from '@ui/gen/v1alpha1/generated_pb';
 
-const tabs = {
+const tabs: Record<
+  string,
+  {
+    path?: string;
+    label: string;
+    icon?: IconDefinition;
+  }
+> = {
   pipelines: {
-    path: paths.project,
     label: 'Pipelines',
     icon: faDiagramProject
   },
   credentials: {
-    path: paths.projectCredentials,
     label: 'Credentials',
     icon: faIdBadge
   },
   analysisTemplates: {
-    path: paths.projectAnalysisTemplates,
     label: 'Analysis Templates',
     icon: faChartBar
   },
   events: {
-    path: paths.projectEvents,
     label: 'Events',
     icon: faClockRotateLeft
   },
   roles: {
-    path: paths.projectRoles,
     label: 'Roles',
     icon: faPeopleGroup
   }
@@ -51,14 +55,22 @@ const tabs = {
 
 export type ProjectTab = keyof typeof tabs;
 
-export const Project = ({ tab = 'pipelines' }: { tab?: ProjectTab }) => {
-  const { name } = useParams();
+export const Project = () => {
+  const { name, tab } = useParams();
   const navigate = useNavigate();
+  const extensions = useExtensions(ExtensionKind.ProjectTab);
 
   const { data, isLoading } = useQuery(getProject, { name });
 
   // we must render the tab contents outside of the Antd tabs component to prevent layout issues in the ProjectDetails component
-  const renderTab = (key: ProjectTab) => {
+  const renderTab = (key?: ProjectTab) => {
+    if (!key) {
+      return <Pipelines />;
+    }
+    if (extensions && extensions[key]) {
+      const Extension = extensions[key].component;
+      return <Extension />;
+    }
     switch (key) {
       case 'pipelines':
         return <Pipelines />;
@@ -74,6 +86,15 @@ export const Project = ({ tab = 'pipelines' }: { tab?: ProjectTab }) => {
         return <Pipelines />;
     }
   };
+
+  Object.values(extensions || {}).forEach((ext) => {
+    if (!tabs[ext.name as string]) {
+      tabs[ext.name as string] = {
+        label: ext.label || ext.name,
+        icon: ext.icon
+      };
+    }
+  });
 
   return (
     <div className='h-full flex flex-col'>
@@ -94,7 +115,7 @@ export const Project = ({ tab = 'pipelines' }: { tab?: ProjectTab }) => {
       <Tabs
         activeKey={tab}
         onChange={(k) => {
-          navigate(generatePath(tabs[k as ProjectTab].path, { name }));
+          navigate(generatePath(paths.projectTab, { name, tab: k }));
         }}
         tabBarStyle={{
           padding: '0 24px',
@@ -103,7 +124,7 @@ export const Project = ({ tab = 'pipelines' }: { tab?: ProjectTab }) => {
         items={Object.entries(tabs).map(([key, value]) => ({
           key,
           label: value.label,
-          icon: <FontAwesomeIcon icon={value.icon} />
+          icon: value.icon ? <FontAwesomeIcon icon={value.icon} /> : null
         }))}
       />
       {renderTab(tab)}

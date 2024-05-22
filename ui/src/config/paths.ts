@@ -2,13 +2,11 @@ export const paths = {
   home: '/',
   projects: '/',
   project: '/project/:name',
-  projectCredentials: '/project/:name/credentials',
-  projectAnalysisTemplates: '/project/:name/analysis-templates',
-  projectEvents: '/project/:name/events',
-  projectRoles: '/project/:name/roles',
+  projectTab: '/project/:name/:tab',
   stage: '/project/:name/stage/:stageName',
   warehouse: '/project/:name/warehouse/:warehouseName',
   freight: '/project/:name/freight/:freightName',
+  systemExtension: '/extension/:name',
 
   login: '/login',
   tokenRenew: '/token-renew'

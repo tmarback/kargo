@@ -1,4 +1,5 @@
 import { IconProp } from '@fortawesome/fontawesome-svg-core';
+import { faDiagramProject } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import classNames from 'classnames';
 import { PropsWithChildren } from 'react';
@@ -8,7 +9,7 @@ import * as styles from './nav-item.module.less';
 
 type Props = {
   path: string;
-  icon: IconProp;
+  icon?: IconProp;
   target?: string;
 };
 
@@ -18,7 +19,7 @@ export const NavItem = ({ path, children, icon, target }: PropsWithChildren<Prop
     to={path}
     target={target}
   >
-    <FontAwesomeIcon icon={icon} size='2x' />
+    <FontAwesomeIcon icon={icon || faDiagramProject} size='2x' />
     <span>{children}</span>
   </NavLink>
 );

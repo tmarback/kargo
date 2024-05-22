@@ -13,6 +13,8 @@ import { AuthContextProvider } from './features/auth/context/auth-context-provid
 import { ProtectedRoute } from './features/auth/protected-route';
 import { TokenRenew } from './features/auth/token-renew';
 import { MainLayout } from './features/common/layout/main-layout';
+import { ExtensionsProvider } from './features/extensions/extensions-provider';
+import { Extension } from './pages/extension';
 import { Login } from './pages/login/login';
 import { Projects } from './pages/projects';
 
@@ -22,32 +24,29 @@ import 'antd/dist/reset.css';
 export const App = () => (
   <TransportProvider transport={transport}>
     <QueryClientProvider client={queryClient}>
-      <ConfigProvider theme={themeConfig}>
-        <AuthContextProvider>
-          <BrowserRouter>
-            <Routes>
-              <Route element={<ProtectedRoute />}>
-                <Route element={<MainLayout />}>
-                  <Route path={paths.projects} element={<Projects />} />
-                  <Route path={paths.project} element={<Project />} />
-                  <Route path={paths.projectCredentials} element={<Project tab='credentials' />} />
-                  <Route
-                    path={paths.projectAnalysisTemplates}
-                    element={<Project tab='analysisTemplates' />}
-                  />
-                  <Route path={paths.projectEvents} element={<Project tab='events' />} />
-                  <Route path={paths.projectRoles} element={<Project tab='roles' />} />
-                  <Route path={paths.stage} element={<Project />} />
-                  <Route path={paths.freight} element={<Project />} />
-                  <Route path={paths.warehouse} element={<Project />} />
+      <ExtensionsProvider>
+        <ConfigProvider theme={themeConfig}>
+          <AuthContextProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route element={<ProtectedRoute />}>
+                  <Route element={<MainLayout />}>
+                    <Route path={paths.projects} element={<Projects />} />
+                    <Route path={paths.project} element={<Project />} />
+                    <Route path={paths.projectTab} element={<Project />} />
+                    <Route path={paths.stage} element={<Project />} />
+                    <Route path={paths.freight} element={<Project />} />
+                    <Route path={paths.warehouse} element={<Project />} />
+                    <Route path={paths.systemExtension} element={<Extension />} />
+                  </Route>
                 </Route>
-              </Route>
-              <Route path={paths.login} element={<Login />} />
-              <Route path={paths.tokenRenew} element={<TokenRenew />} />
-            </Routes>
-          </BrowserRouter>
-        </AuthContextProvider>
-      </ConfigProvider>
+                <Route path={paths.login} element={<Login />} />
+                <Route path={paths.tokenRenew} element={<TokenRenew />} />
+              </Routes>
+            </BrowserRouter>
+          </AuthContextProvider>
+        </ConfigProvider>
+      </ExtensionsProvider>
     </QueryClientProvider>
   </TransportProvider>
 );

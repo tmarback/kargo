@@ -11,6 +11,7 @@ import { Freight } from '@ui/gen/v1alpha1/generated_pb';
 import { Description } from '../common/description';
 import { ManifestPreview } from '../common/manifest-preview';
 import { getAlias } from '../common/utils';
+import { ExtensionKind, useExtensions } from '../extensions/extensions';
 import { FreightContents } from '../freightline/freight-contents';
 
 import { FreightStatusList } from './freight-status-list';
@@ -33,6 +34,7 @@ export const FreightDetails = ({ freight }: { freight?: Freight }) => {
   }, [freight]);
 
   const onClose = () => navigate(generatePath(paths.project, { name: projectName }));
+  const extensions = useExtensions(ExtensionKind.FreightTab);
 
   return (
     <Drawer open={!!freight} onClose={onClose} width={'80%'} closable={false}>
@@ -77,7 +79,14 @@ export const FreightDetails = ({ freight }: { freight?: Freight }) => {
                   icon: <FontAwesomeIcon icon={faFile} />,
                   className: 'h-full pb-2',
                   children: <ManifestPreview object={freight} />
-                }
+                },
+                ...Object.values(extensions || {}).map((extension) => ({
+                  key: extension.name,
+                  className: 'h-full pb-2',
+                  label: extension.label || extension.name,
+                  icon: <FontAwesomeIcon icon={extension.icon || faInfoCircle} />,
+                  children: <extension.component />
+                }))
               ]}
             />
           </div>

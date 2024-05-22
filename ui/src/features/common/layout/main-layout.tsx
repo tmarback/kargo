@@ -3,16 +3,19 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { Button, Spin, Tooltip } from 'antd';
 import ErrorBoundary from 'antd/es/alert/ErrorBoundary';
 import { Suspense } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, generatePath } from 'react-router-dom';
 
 import { paths } from '@ui/config/paths';
 import { useAuthContext } from '@ui/features/auth/context/use-auth-context';
+import { ExtensionKind, useExtensions } from '@ui/features/extensions/extensions';
 
 import * as styles from './main-layout.module.less';
 import { NavItem } from './nav-item/nav-item';
 
 export const MainLayout = () => {
   const { logout } = useAuthContext();
+
+  const extensions = useExtensions(ExtensionKind.SystemTab);
 
   return (
     <ErrorBoundary>
@@ -45,6 +48,15 @@ export const MainLayout = () => {
               <NavItem icon={faBook} path='https://kargo.akuity.io' target='_blank'>
                 Docs
               </NavItem>
+              {Object.values(extensions || {}).map((extension) => (
+                <NavItem
+                  key={extension.name}
+                  path={generatePath(paths.systemExtension, { name: extension.name })}
+                  icon={extension.icon}
+                >
+                  {extension.label}
+                </NavItem>
+              ))}
             </nav>
 
             <Button

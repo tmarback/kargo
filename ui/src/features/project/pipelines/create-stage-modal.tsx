@@ -1,6 +1,7 @@
 import { useMutation } from '@connectrpc/connect-query';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Button, Modal, Space, Typography } from 'antd';
+import { Button, Modal, Space, Tabs, Typography } from 'antd';
 import type { JSONSchema4 } from 'json-schema';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -8,6 +9,7 @@ import { z } from 'zod';
 import { YamlEditor } from '@ui/features/common/code-editor/yaml-editor';
 import { FieldContainer } from '@ui/features/common/form/field-container';
 import { ModalComponentProps } from '@ui/features/common/modal/modal-context';
+import { ExtensionKind, useExtensions } from '@ui/features/extensions/extensions';
 import schema from '@ui/gen/schema/stages.kargo.akuity.io_v1alpha1.json';
 import { createResource } from '@ui/gen/service/v1alpha1/service-KargoService_connectquery';
 import { zodValidators } from '@ui/utils/validators';
@@ -41,6 +43,8 @@ export const CreateStageModal = ({ visible, hide, project }: Props) => {
     });
   });
 
+  const extensions = useExtensions(ExtensionKind.CreateStage);
+
   return (
     <Modal
       open={visible}
@@ -64,17 +68,30 @@ export const CreateStageModal = ({ visible, hide, project }: Props) => {
         </div>
       }
     >
-      <FieldContainer label='YAML' name='value' control={control}>
-        {({ field: { value, onChange } }) => (
-          <YamlEditor
-            value={value}
-            onChange={(e) => onChange(e || '')}
-            height='500px'
-            schema={schema as JSONSchema4}
-            placeholder={getStageYAMLExample(project)}
-          />
-        )}
-      </FieldContainer>
+      <Tabs defaultActiveKey='yaml'>
+        <Tabs.TabPane tab='YAML' key='yaml'>
+          <FieldContainer name='value' control={control}>
+            {({ field: { value, onChange } }) => (
+              <YamlEditor
+                value={value}
+                onChange={(e) => onChange(e || '')}
+                height='500px'
+                schema={schema as JSONSchema4}
+                placeholder={getStageYAMLExample(project)}
+              />
+            )}
+          </FieldContainer>
+        </Tabs.TabPane>
+        {Object.values(extensions || {}).map((ext) => (
+          <Tabs.TabPane
+            tab={ext.label || ext.name}
+            key={ext.name}
+            icon={ext.icon && <FontAwesomeIcon icon={ext.icon} />}
+          >
+            <ext.component />
+          </Tabs.TabPane>
+        ))}
+      </Tabs>
     </Modal>
   );
 };

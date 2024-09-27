@@ -79,6 +79,7 @@ export const OIDCLogin = ({ oidcConfig }: Props) => {
     url.searchParams.set('code_challenge_method', 'S256');
     url.searchParams.set('redirect_uri', redirectURI);
     url.searchParams.set('response_type', 'code');
+    url.searchParams.set('state', 'abcde');
     url.searchParams.set(
       'scope',
       [

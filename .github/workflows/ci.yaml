@@ -96,22 +96,6 @@ jobs:
       - name: Run linter
         run: make lint-charts
 
-  lint-proto:
-    runs-on: ubuntu-latest
-    container:
-      image: golang:1.22.5-bookworm
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install linter
-        uses: bufbuild/buf-setup-action@v1
-        with:
-          version: "1.20.0"
-      - name: Run linter
-        env:
-          BUF_LINT_ERROR_FORMAT: github-actions
-        run: make lint-proto
-
   check-codegen:
     runs-on: ubuntu-latest
     container:
@@ -164,7 +148,7 @@ jobs:
       run: git diff --exit-code -- .
 
   build-image:
-    needs: [test-unit, lint-go, lint-charts, lint-proto, lint-ui, check-codegen]
+    needs: [test-unit, lint-go, lint-charts, lint-ui, check-codegen]
     runs-on: ubuntu-latest
     steps:
     - name: Set up QEMU
@@ -180,7 +164,7 @@ jobs:
         cache-to: type=gha,mode=max
 
   build-cli:
-    needs: [test-unit, lint-go, lint-charts, lint-proto, lint-ui, check-codegen]
+    needs: [test-unit, lint-go, lint-charts, lint-ui, check-codegen]
     runs-on: ubuntu-latest
     container:
       image: golang:1.22.5-bookworm

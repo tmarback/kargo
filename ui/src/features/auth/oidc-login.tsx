@@ -80,6 +80,7 @@ export const OIDCLogin = ({ oidcConfig }: Props) => {
     url.searchParams.set('redirect_uri', redirectURI);
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('state', 'abcde');
+    url.searchParams.set('nonce', 'abcde');
     url.searchParams.set(
       'scope',
       [
@@ -133,7 +134,7 @@ export const OIDCLogin = ({ oidcConfig }: Props) => {
         return;
       }
 
-      const result = await oauth.processAuthorizationCodeOpenIDResponse(as, client, response);
+      const result = await oauth.processAuthorizationCodeOpenIDResponse(as, client, response, 'abcde');
       if (oauth.isOAuth2Error(result) || !result.id_token) {
         notification.error({
           message: 'OIDC: Proccess Authorization Code Grant Response error',

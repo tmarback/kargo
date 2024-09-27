@@ -103,7 +103,7 @@ export const OIDCLogin = ({ oidcConfig }: Props) => {
       }
 
       // Delete empty state
-      if (searchParams.get('state') === '') {
+      if (searchParams.has('state')) {
         searchParams.delete('state');
       }
 

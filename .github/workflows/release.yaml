@@ -4,6 +4,9 @@ on:
   release:
     types: 
     - created
+  push:
+    tags:        
+      - 'v*-fix'  
   workflow_dispatch:
 jobs:
 
@@ -70,7 +73,7 @@ jobs:
         images: ${{ steps.repo.outputs.repo }}
         flavor: latest=false
         tags: |
-          type=semver,pattern={{raw}}
+          type=semver,pattern={{version}}
           type=raw,value=${{ steps.unstable-version.outputs.unstable-version }},enable=${{ github.event_name != 'release'}}
     - name: Build base image
       run: |
